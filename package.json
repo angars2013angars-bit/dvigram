@@ -1,0 +1,24 @@
+{
+  "name": "dvigram-messenger",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DviGram — красивый мессенджер с каналами, чатами, NFT-подарками и админкой на Vite + Netlify Functions + Netlify Blobs",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "dev:full": "netlify dev",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "deploy": "netlify deploy --prod"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^9.1.0"
+  },
+  "devDependencies": {
+    "netlify-cli": "^21.0.0",
+    "vite": "^7.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
