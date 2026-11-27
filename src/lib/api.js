@@ -1,10 +1,21 @@
+import { deviceId } from './device.js';
+import { clearSavedKey, getSavedKey } from './dvis.js';
 import { localApi } from './localApi.js';
 
 const API_URL = '/.netlify/functions/api';
+const RETRY_DELAY = 250;
+const REPROBE_INTERVAL = 15_000;
+const REQUEST_TIMEOUT = 12_000;
 
 let backendAvailable = true;
+let backendChecked = false;
+let backendCheck = null;
+let lastProbeAt = 0;
 let fallbackAnnounced = false;
+let reloginPromise = null;
+let sessionLost = false;
 const modeListeners = new Set();
+const sessionListeners = new Set();
 
 export class ApiError extends Error {
   constructor(message, status = 0) {
@@ -17,9 +28,13 @@ export class ApiError extends Error {
 class TransportError extends Error {
   constructor(message) {
     super(message);
+    this.name = 'TransportError';
     this.transport = true;
   }
 }
+
+const isTransport = (error) => Boolean(error?.transport);
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function localAction(action) {
   return action.replace(/\.([a-z])/g, (_, letter) => letter.toUpperCase());
@@ -28,7 +43,7 @@ function localAction(action) {
 async function localCall(action, body) {
   const fn = localApi[localAction(action)];
   if (typeof fn !== 'function') throw new ApiError(`Неизвестное локальное действие: ${action}`);
-  return fn.call(localApi, body || {});
+  return fn.call(localApi, { ...body, deviceId: deviceId() });
 }
 
 function announceFallback() {
@@ -43,48 +58,208 @@ function announceFallback() {
   });
 }
 
+function markAuthenticated() {
+  sessionLost = false;
+}
+
+function notifySessionLost(error) {
+  if (sessionLost) return;
+  sessionLost = true;
+  sessionListeners.forEach((listener) => {
+    try {
+      listener(error);
+    } catch {
+      /* игнорируем ошибки слушателей */
+    }
+  });
+}
+
 async function serverCall(action, body) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
   let response;
   try {
     response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
       method: 'POST',
       credentials: 'same-origin',
       cache: 'no-store',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Dvis-Device': deviceId(),
+      },
+      body: JSON.stringify(body || {}),
     });
   } catch {
     throw new TransportError('Сервер недоступен');
+  } finally {
+    clearTimeout(timer);
   }
 
   const contentType = response.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
-    throw new TransportError('API Netlify не найден');
-  }
+  if (!contentType.includes('application/json')) throw new TransportError('Сервер Dvis не найден');
 
   let data;
   try {
     data = await response.json();
   } catch {
-    throw new TransportError('Некорректный ответ API');
+    throw new TransportError('Некорректный ответ сервера');
   }
-
   if (!response.ok) throw new ApiError(data.error || 'Ошибка запроса', response.status);
   return data;
 }
 
-async function call(action, body = {}) {
-  if (!backendAvailable) return localCall(action, body);
-  try {
-    return await serverCall(action, body);
-  } catch (error) {
-    if (error.transport) {
-      backendAvailable = false;
-      announceFallback();
-      return localCall(action, body);
+/**
+ * Проверяем бэкенд один раз. В dev (Vite без Functions) разрешаем демо-режим.
+ * В production transient-ошибка НЕ переводит навсегда в localStorage —
+ * иначе аккаунт «вылетал» после любого сбоя сети и просил ключ.
+ */
+async function probeBackend(force = false) {
+  if (backendChecked && !force) return backendAvailable;
+  if (backendCheck) return backendCheck;
+
+  lastProbeAt = Date.now();
+  backendCheck = (async () => {
+    try {
+      await serverCall('me', {});
+      backendAvailable = true;
+    } catch (error) {
+      if (isTransport(error)) {
+        // Vite без Netlify Functions = демо-режим на localStorage.
+        // В production сетевой сбой НЕ переключает на локальные данные.
+        backendAvailable = !import.meta.env.DEV;
+        if (!backendAvailable) announceFallback();
+      } else {
+        // JSON-ответ со статусом 401/403 — это живой сервер.
+        backendAvailable = true;
+      }
     }
-    throw error;
+    backendChecked = true;
+    lastProbeAt = Date.now();
+    return backendAvailable;
+  })();
+
+  try {
+    return await backendCheck;
+  } finally {
+    backendCheck = null;
   }
+}
+
+async function ensureBackend() {
+  if (!backendChecked) return probeBackend();
+  if (!backendAvailable && Date.now() - lastProbeAt > REPROBE_INTERVAL) return probeBackend(true);
+  return backendAvailable;
+}
+
+/** Тихий релогин по сохранённому ключу — пользователь не видит экран ввода. */
+async function relogin() {
+  if (reloginPromise) return reloginPromise;
+  const key = getSavedKey();
+  if (!key) return false;
+
+  reloginPromise = (async () => {
+    try {
+      await serverCall('account.login', { key });
+      markAuthenticated();
+      return true;
+    } catch (error) {
+      // Сеть пропала — это не «вылет ключа», а временная ошибка. Повтор сам
+      // пользователь или следующий запрос; экран ввода ключа не показываем.
+      if (isTransport(error)) throw new ApiError('Сервер временно недоступен. Попробуйте ещё раз', 503);
+      if ([400, 401, 403].includes(error.status)) clearSavedKey();
+      return false;
+    }
+  })();
+
+  try {
+    return await reloginPromise;
+  } finally {
+    reloginPromise = null;
+  }
+}
+
+async function call(action, body = {}) {
+  await ensureBackend();
+  if (!backendAvailable) return localCall(action, body);
+
+  const isAuthAction = action === 'account.login' || action === 'account.create' || action === 'me';
+  let retriedTransport = false;
+  let retriedAuth = false;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const result = await serverCall(action, body);
+      if (action === 'account.login' || action === 'account.create') markAuthenticated();
+      return result;
+    } catch (error) {
+      if (isTransport(error)) {
+        if (!retriedTransport) {
+          retriedTransport = true;
+          await wait(RETRY_DELAY);
+          continue;
+        }
+        throw new ApiError('Сервер временно недоступен. Попробуйте ещё раз', 503);
+      }
+      if (!isAuthAction && !retriedAuth && [401, 403].includes(error.status)) {
+        retriedAuth = true;
+        if (await relogin()) continue;
+        notifySessionLost(error);
+      }
+      throw error;
+    }
+  }
+  throw new ApiError('Не удалось выполнить запрос');
+}
+
+/** Восстановление сессии при запуске: cookie → сохранённый ключ → ввод ключа. */
+async function restore() {
+  await ensureBackend();
+  if (!backendAvailable) {
+    try {
+      return (await localCall('me')).user || null;
+    } catch {
+      return null;
+    }
+  }
+
+  let retriedTransport = false;
+  let retriedAuth = false;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const { user } = await serverCall('me');
+      if (user) {
+        markAuthenticated();
+        return user;
+      }
+      // Сессия истекла, но ключ сохранён — тихо логинимся и пробуем ещё раз.
+      if (!retriedAuth) {
+        retriedAuth = true;
+        if (await relogin()) continue;
+      }
+      return null;
+    } catch (error) {
+      if (isTransport(error)) {
+        if (!retriedTransport) {
+          retriedTransport = true;
+          await wait(RETRY_DELAY);
+          continue;
+        }
+        throw new ApiError('Сервер временно недоступен. Нажмите «Повторить»', 503);
+      }
+      if ([401, 403].includes(error.status)) {
+        if (!retriedAuth) {
+          retriedAuth = true;
+          if (await relogin()) continue;
+        }
+        notifySessionLost(error);
+        throw error;
+      }
+      throw error;
+    }
+  }
+  return null;
 }
 
 function method(action) {
@@ -92,39 +267,41 @@ function method(action) {
 }
 
 export const api = {
-  init: () => call('me'),
+  init: restore,
+  restore,
   isDemo: () => !backendAvailable,
+  noteAuthenticated: markAuthenticated,
   onDemoMode(listener) {
     modeListeners.add(listener);
     if (!backendAvailable) listener(true);
     return () => modeListeners.delete(listener);
   },
-  register: method('register'),
-  login: method('login'),
-  logout: method('logout'),
+  onSessionLost(listener) {
+    sessionListeners.add(listener);
+    if (sessionLost) listener();
+    return () => sessionListeners.delete(listener);
+  },
+  clearSessionLost: markAuthenticated,
+  accountCreate: method('account.create'),
+  accountLogin: method('account.login'),
+  logout: method('account.logout'),
   me: method('me'),
-  contacts: method('contacts'),
   profileUpdate: method('profile.update'),
-  customizeUpdate: method('customize.update'),
-  mediaAvatar: method('media.avatar'),
-  mediaAvatarRemove: method('media.avatar.remove'),
-  mediaMusic: method('media.music'),
-  mediaMusicGet: method('media.music.get'),
-  mediaMusicRemove: method('media.music.remove'),
-  dailyClaim: method('daily.claim'),
-  storeItems: method('store.items'),
-  storeBuy: method('store.buy'),
-  giftsList: method('gifts.list'),
-  giftsSend: method('gifts.send'),
-  adminUsers: method('admin.users'),
-  adminUpdateUser: method('admin.updateUser'),
-  chats: method('chats'),
-  chatsCreate: method('chats.create'),
-  chatsUpdate: method('chats.update'),
-  messages: method('messages'),
+  chatsList: method('chats.list'),
+  chatUpdate: method('chat.update'),
+  chatLeave: method('chat.leave'),
+  inviteCreate: method('invite.create'),
+  inviteList: method('invite.list'),
+  inviteRevoke: method('invite.revoke'),
+  inviteJoin: method('invite.join'),
+  messagesList: method('messages.list'),
   messagesSend: method('messages.send'),
   messagesRead: method('messages.read'),
-  messagesEdit: method('messages.edit'),
-  messagesDelete: method('messages.delete'),
   messagesReact: method('messages.react'),
+  messagesDelete: method('messages.delete'),
+  callStart: method('call.start'),
+  callSignal: method('call.signal'),
+  callActive: method('call.active'),
+  callEnd: method('call.end'),
+  callsList: method('calls.list'),
 };

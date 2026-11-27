@@ -1,15 +1,15 @@
 {
-  "name": "DviGram — мессенджер",
-  "short_name": "DviGram",
-  "description": "Красивый мессенджер с каналами, NFT-подарками и музыкой в профиле.",
+  "name": "Dvis — анонимный мессенджер",
+  "short_name": "Dvis",
+  "description": "Анонимный мессенджер: короткий ключ, привязка к устройству, чаты только по приглашению и аудиозвонки.",
   "lang": "ru",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "fullscreen", "minimal-ui"],
   "orientation": "any",
-  "background_color": "#05070d",
-  "theme_color": "#05070d",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "categories": ["social", "communication"],
   "icons": [
     {

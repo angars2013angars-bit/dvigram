@@ -1,5 +1,5 @@
-/* DviGram service worker: быстрый запуск и оболочка без сети. */
-const CACHE = 'dvigram-shell-v2';
+/* Dvis service worker: быстрый запуск и оболочка без сети. API не кэшируется. */
+const CACHE = 'dvis-shell-v2';
 const SHELL = [
   '/',
   '/index.html',

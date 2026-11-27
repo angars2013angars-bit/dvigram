@@ -1,222 +1,137 @@
 import { api } from '../lib/api.js';
-import { toast } from '../lib/ui.js';
-import { avatarHtml, icon } from '../lib/utils.js';
+import { KEY_HINT, getSavedKey, normalizeKey, saveKey } from '../lib/dvis.js';
+import { deviceLabel, interfaceLabel } from '../lib/device.js';
+import { copyText, toast } from '../lib/ui.js';
+import { escapeHtml, icon } from '../lib/utils.js';
 
-export function renderAuth(root, onAuthenticated) {
-  let mode = 'login';
-  let showPassword = false;
+export function renderAuth(root, onSuccess) {
+  let step = 'welcome';
+  let issuedKey = '';
+  let currentUser = null;
+  let busy = false;
 
-  root.innerHTML = `
-    <main class="auth-shell">
-      <section class="auth-art" aria-hidden="true">
-        <div class="auth-art__glow auth-art__glow--one"></div>
-        <div class="auth-art__glow auth-art__glow--two"></div>
-        <div class="auth-brand">
-          <span class="brand-mark brand-mark--large">${icon('send', 26)}</span>
-          <span>Dvi<span>Gram</span></span>
-        </div>
-        <div class="auth-art__copy">
-          <p class="eyebrow">Мессенджер нового поколения</p>
-          <h1>Общайтесь<br><em>без границ</em></h1>
-          <p>Личные чаты, каналы, группы, реакции, NFT-подарки и внутренняя валюта. Всё в одном лёгком интерфейсе.</p>
-        </div>
-        <div class="chat-scene">
-          <div class="float-card float-card--one">
-            ${avatarHtml({ name: 'Алина Соколова', avatar: { color: '#8b5cf6' } }, 42)}
-            <div><strong>Алина</strong><span>Посмотри новый макет ✨</span></div>
-            <time>12:04</time>
-          </div>
-          <div class="float-card float-card--two">
-            <div class="float-card__bubble">Очень красиво! 💙</div>
-            ${avatarHtml({ name: 'Вы', avatar: { color: '#0b7cff' } }, 34)}
-          </div>
-          <div class="float-card float-card--three">
-            <span class="float-card__icon">${icon('users', 20)}</span>
-            <div><strong>Планы на выходные</strong><span>3 участника · онлайн</span></div>
-          </div>
-        </div>
-        <ul class="auth-features">
-          <li>${icon('lock', 16)} Хеширование паролей</li>
-          <li>${icon('sparkles', 16)} Кастомизация интерфейса</li>
-          <li>${icon('shield', 16)} Админка и модерация</li>
-        </ul>
-      </section>
-
-      <section class="auth-panel">
+  function render() {
+    root.innerHTML = `
+      <div class="auth-shell">
+        <div class="auth-noise"></div>
         <div class="auth-card">
-          <div class="brand-mark auth-mobile-mark">${icon('send', 20)}</div>
-          <h2 class="auth-card__title">Добро пожаловать</h2>
-          <p class="auth-card__subtitle" id="auth-subtitle">Войдите, чтобы продолжить общение</p>
-
-          <div class="auth-tabs" role="tablist">
-            <button class="auth-tab is-active" data-mode="login" role="tab" aria-selected="true">Вход</button>
-            <button class="auth-tab" data-mode="register" role="tab" aria-selected="false">Регистрация</button>
+          <div class="brand">
+            <div class="brand__mark">${icon('lock', 26)}</div>
+            <div>
+              <h1>Dvis</h1>
+              <p>анонимный мессенджер</p>
+            </div>
           </div>
-
-          <form id="auth-form" novalidate>
-            <div class="field is-hidden" data-register-field>
-              <label for="auth-name">Имя</label>
-              <div class="field__control">
-                <span class="field__icon">${icon('user', 18)}</span>
-                <input id="auth-name" name="name" type="text" placeholder="Как к вам обращаться" autocomplete="name" />
-              </div>
-            </div>
-
-            <div class="field">
-              <label for="auth-login">Логин</label>
-              <div class="field__control">
-                <span class="field__icon">${icon('mail', 18)}</span>
-                <input id="auth-login" name="login" type="text" placeholder="например, alex_2026" autocomplete="username" required />
-              </div>
-            </div>
-
-            <div class="field">
-              <label for="auth-password">Пароль</label>
-              <div class="field__control">
-                <span class="field__icon">${icon('lock', 18)}</span>
-                <input id="auth-password" name="password" type="password" placeholder="Минимум 8 символов" autocomplete="current-password" required />
-                <button type="button" class="field__toggle" id="toggle-password" aria-label="Показать пароль">${icon('eye', 18)}</button>
-              </div>
-              <div class="strength is-hidden" data-strength>
-                <div class="strength__bars"><i></i><i></i><i></i><i></i></div>
-                <span class="strength__label">Слабый пароль</span>
-              </div>
-            </div>
-
-            <div class="field is-hidden" data-register-field>
-              <label for="auth-confirm">Повторите пароль</label>
-              <div class="field__control">
-                <span class="field__icon">${icon('lock', 18)}</span>
-                <input id="auth-confirm" name="confirm" type="password" placeholder="Ещё раз пароль" autocomplete="new-password" />
-              </div>
-            </div>
-
-            <p class="form-error" id="auth-error" role="alert"></p>
-
-            <button class="btn btn--primary btn--block" id="auth-submit" type="submit">
-              <span class="btn__label">Войти</span>
-              <span class="btn__loader" aria-hidden="true"></span>
-            </button>
-          </form>
-
-          <div class="auth-demo is-hidden" id="auth-demo">
-            <div class="auth-demo__head">${icon('sparkles', 16)} Демо-режим</div>
-            <p>Сервер Netlify не подключён — данные сохраняются в этом браузере. На сервере доступны аккаунты admin и dvinsky с паролем <b>82Idomih)</b>.</p>
-            <button class="btn btn--soft btn--block" id="demo-login">Войти как <b>demo</b> / <b>demo1234</b></button>
-          </div>
-
-          <p class="auth-footnote">Нажимая «Продолжить», вы соглашаетесь с правилами DviGram.</p>
+          <div id="auth-step">${stepHtml()}</div>
         </div>
-      </section>
-    </main>
-  `;
-
-  const form = root.querySelector('#auth-form');
-  const errorEl = root.querySelector('#auth-error');
-  const submitBtn = root.querySelector('#auth-submit');
-  const subtitle = root.querySelector('#auth-subtitle');
-  const strength = root.querySelector('[data-strength]');
-  const passwordInput = root.querySelector('#auth-password');
-  const confirmInput = root.querySelector('#auth-confirm');
-
-  function setMode(next) {
-    mode = next;
-    root.querySelectorAll('.auth-tab').forEach((tab) => {
-      const active = tab.dataset.mode === mode;
-      tab.classList.toggle('is-active', active);
-      tab.setAttribute('aria-selected', String(active));
-    });
-    root.querySelectorAll('[data-register-field]').forEach((field) => field.classList.toggle('is-hidden', mode !== 'register'));
-    strength.classList.toggle('is-hidden', mode !== 'register');
-    subtitle.textContent = mode === 'login' ? 'Войдите, чтобы продолжить общение' : 'Создайте аккаунт за пару секунд';
-    submitBtn.querySelector('.btn__label').textContent = mode === 'login' ? 'Войти' : 'Создать аккаунт';
-    passwordInput.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
-    confirmInput.required = mode === 'register';
-    root.querySelector('#auth-name').required = mode === 'register';
-    errorEl.textContent = '';
+        <p class="auth-foot">${icon('shield', 13)} ${escapeHtml(deviceLabel())} · ${escapeHtml(interfaceLabel())}</p>
+      </div>
+    `;
+    bind();
   }
 
-  function updateStrength() {
-    if (mode !== 'register') return;
-    const value = passwordInput.value;
-    let score = 0;
-    if (value.length >= 8) score++;
-    if (/[A-ZА-Я]/u.test(value)) score++;
-    if (/\d/.test(value)) score++;
-    if (/[^A-Za-zА-Яа-я0-9]/u.test(value)) score++;
-    strength.dataset.score = String(score);
-    strength.querySelector('.strength__label').textContent = ['Слабый', 'Простой', 'Нормальный', 'Хороший', 'Отличный'][score];
-  }
-
-  root.querySelectorAll('.auth-tab').forEach((tab) => {
-    tab.addEventListener('click', () => setMode(tab.dataset.mode));
-  });
-
-  root.querySelector('#toggle-password').addEventListener('click', () => {
-    showPassword = !showPassword;
-    passwordInput.type = showPassword ? 'text' : 'password';
-    confirmInput.type = showPassword ? 'text' : 'password';
-  });
-
-  passwordInput.addEventListener('input', updateStrength);
-  confirmInput.addEventListener('input', updateStrength);
-
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    errorEl.textContent = '';
-    const payload = {
-      name: root.querySelector('#auth-name').value.trim(),
-      login: root.querySelector('#auth-login').value.trim(),
-      password: passwordInput.value,
-      confirm: confirmInput.value,
-    };
-
-    if (!payload.login || !payload.password) {
-      errorEl.textContent = 'Заполните логин и пароль';
-      return;
+  function stepHtml() {
+    if (step === 'reveal') {
+      return `
+        <div class="auth-step">
+          <div class="step-badge">${icon('key', 18)} Ключ выдан</div>
+          <h2>Сохраните ключ</h2>
+          <p class="auth-sub">Короткий ключ — это ваш аккаунт. Он появится только сейчас и будет работать только на этом устройстве.</p>
+          <div class="key-box"><span>${escapeHtml(issuedKey)}</span></div>
+          <button class="btn btn--block" data-copy-key>${icon('copy', 17)} Скопировать ключ</button>
+          <div class="warn-box">${icon('info', 16)} Запишите ключ. Потеряете устройство или ключ — восстановить аккаунт нельзя.</div>
+          <button class="btn btn--primary btn--block" data-continue>Я сохранил — продолжить ${icon('arrow', 17)}</button>
+        </div>
+      `;
     }
-    if (mode === 'register') {
-      if (payload.name.length < 2) {
-        errorEl.textContent = 'Укажите имя (минимум 2 символа)';
-        return;
+    if (step === 'login') {
+      return `
+        <div class="auth-step">
+          <button class="link-back" data-back>${icon('back', 15)} Назад</button>
+          <div class="step-badge">${icon('key', 18)} Вход по ключу</div>
+          <h2>Введите ключ</h2>
+          <p class="auth-sub">Ключ действует только на этом устройстве — так даже короткий код нельзя подобрать со стороны.</p>
+          <form id="login-form" class="auth-form">
+            <label class="field">
+              <span>Ключ Dvis</span>
+              <input id="key-input" autocomplete="off" spellcheck="false" value="${escapeHtml(getSavedKey())}" placeholder="${KEY_HINT}" required />
+            </label>
+            <p class="field-error" id="auth-error"></p>
+            <button class="btn btn--primary btn--block" type="submit">${icon('arrow', 17)} Войти</button>
+          </form>
+        </div>
+      `;
+    }
+    return `
+      <div class="auth-step">
+        <div class="step-badge">${icon('shield', 17)} Приватно по умолчанию</div>
+        <h2>Общайтесь без личности</h2>
+        <p class="auth-sub">Dvis не просит телефон и почту. Ключ выдаётся один раз и привязывается к устройству. Люди находятся только по вашему приглашению.</p>
+        <button class="btn btn--primary btn--block" data-create>${icon('plus', 18)} Создать аккаунт</button>
+        <button class="btn btn--soft btn--block" data-login>${icon('key', 18)} У меня уже есть ключ</button>
+        <div class="auth-note">${icon('info', 15)} При запуске без Netlify данные остаются только в этом браузере.</div>
+      </div>
+    `;
+  }
+
+  function bind() {
+    root.querySelector('[data-create]')?.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      const btn = root.querySelector('[data-create]');
+      btn.disabled = true;
+      btn.textContent = 'Создаём ключ...';
+      try {
+        const result = await api.accountCreate();
+        issuedKey = result.key;
+        currentUser = result.user;
+        saveKey(issuedKey);
+        api.noteAuthenticated();
+        step = 'reveal';
+        render();
+      } catch (error) {
+        toast(error.message || 'Не удалось создать аккаунт', 'error');
+        busy = false;
+        render();
       }
-      if (payload.password !== payload.confirm) {
-        errorEl.textContent = 'Пароли не совпадают';
-        return;
+    });
+
+    root.querySelector('[data-login]')?.addEventListener('click', () => {
+      step = 'login';
+      render();
+      root.querySelector('#key-input')?.focus();
+    });
+
+    root.querySelector('[data-back]')?.addEventListener('click', () => {
+      step = 'welcome';
+      render();
+    });
+
+    root.querySelector('#login-form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      const errorBox = root.querySelector('#auth-error');
+      try {
+        const key = normalizeKey(root.querySelector('#key-input').value);
+        busy = true;
+        const result = await api.accountLogin({ key });
+        currentUser = result.user;
+        saveKey(key);
+        api.noteAuthenticated();
+        onSuccess(currentUser);
+      } catch (error) {
+        busy = false;
+        errorBox.textContent = error.message || 'Не удалось войти';
       }
-    }
+    });
 
-    submitBtn.classList.add('is-loading');
-    submitBtn.disabled = true;
-    try {
-      const result = mode === 'login' ? await api.login(payload) : await api.register(payload);
-      toast(mode === 'login' ? 'С возвращением!' : 'Аккаунт создан 🎉', 'success');
-      onAuthenticated(result.user);
-    } catch (error) {
-      errorEl.textContent = error.message || 'Не удалось войти';
-    } finally {
-      submitBtn.classList.remove('is-loading');
-      submitBtn.disabled = false;
-    }
-  });
+    root.querySelector('[data-copy-key]')?.addEventListener('click', () => copyText(issuedKey, 'Ключ скопирован'));
 
-  function revealDemo() {
-    root.querySelector('#auth-demo').classList.remove('is-hidden');
-  }
-  if (api.isDemo()) {
-    revealDemo();
-  } else {
-    let unsubscribe = () => {};
-    unsubscribe = api.onDemoMode(() => {
-      revealDemo();
-      unsubscribe();
+    root.querySelector('[data-continue]')?.addEventListener('click', () => {
+      issuedKey = '';
+      onSuccess(currentUser);
     });
   }
 
-  root.querySelector('#demo-login').addEventListener('click', async () => {
-    root.querySelector('#auth-login').value = 'demo';
-    root.querySelector('#auth-password').value = 'demo1234';
-    setMode('login');
-    form.requestSubmit();
-  });
+  render();
 }

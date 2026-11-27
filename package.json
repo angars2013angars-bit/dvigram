@@ -1,9 +1,9 @@
 {
-  "name": "dvigram-messenger",
+  "name": "dvis-messenger",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "DviGram — красивый мессенджер с каналами, чатами, NFT-подарками и админкой на Vite + Netlify Functions + Netlify Blobs",
+  "description": "Dvis — анонимный мессенджер с коротким ключом, привязкой к устройству, приглашениями и аудиозвонками",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "dev:full": "netlify dev",
