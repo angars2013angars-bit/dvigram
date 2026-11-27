@@ -267,10 +267,7 @@ a { color: var(--text); }
 .card__title { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 14px; font-weight: 650; }
 .card__title .icon { color: #fff; }
 .card .btn + .btn { margin-top: 8px; }
-.masked-key { margin-bottom: 12px; padding: 13px; border-radius: 11px; background: #090909; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: .08em; text-align: center; color: var(--muted); overflow-wrap: anywhere; }
-.masked-key.is-revealed { color: #fff; letter-spacing: .12em; }
-.key-actions { display: flex; gap: 8px; margin-bottom: 12px; }
-.key-actions .btn { flex: 1; }
+.login-nick { margin-bottom: 12px; padding: 13px; border-radius: 11px; background: #090909; font-size: 16px; font-weight: 650; text-align: center; color: #fff; overflow-wrap: anywhere; }
 .hint { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
 .version { margin: 20px 0 0; text-align: center; color: var(--muted-2); font-size: 11px; }
 .invite-card { margin-bottom: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel-2); }

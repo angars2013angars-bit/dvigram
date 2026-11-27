@@ -1,11 +1,9 @@
-/** Общие хелперы Dvis: короткие ключи, коды приглашений и форматтеры. */
+/** Общие хелперы Dvis: коды приглашений и форматтеры. */
 
-export const KEY_HINT = 'DV-AB3K-9QWE';
 export const REACTIONS = ['👍', '❤️', '😂', '🔥', '😮', '😢'];
 
-const KEY_STORAGE = 'dvis:key';
-const KEY_COOKIE = 'dvis_key';
-const KEY_RE = /^DV-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
+const CRED_STORAGE = 'dvis:credentials';
+const CRED_COOKIE = 'dvis_credentials';
 
 function readCookie(name) {
   try {
@@ -21,60 +19,52 @@ function writeCookie(name, value, maxAge) {
     const secure = location.protocol === 'https:' ? '; Secure' : '';
     document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
   } catch {
-    /* без cookie ключ остаётся в хранилищах браузера */
+    /* без cookie данные остаются в хранилищах браузера */
   }
 }
 
 /**
- * Ключ хранится только на устройстве; сервер его повторно не отдаёт.
- * Три копии (localStorage, sessionStorage, cookie) нужны, чтобы ключ не
- * «вылетал» после очистки одного хранилища или перезапуска вкладки.
+ * Ник и пароль хранятся только в этом браузере, чтобы приложение могло тихо
+ * восстановить сессию без экрана входа. Три копии защищают от частичной очистки.
  */
-export function getSavedKey() {
+function validCredentials(value) {
+  return Boolean(value && typeof value.nickname === 'string' && typeof value.password === 'string'
+    && value.nickname.length >= 3 && value.password.length >= 6);
+}
+
+export function getSavedCredentials() {
   const sources = [];
-  try { sources.push(localStorage.getItem(KEY_STORAGE)); } catch { /* ignore */ }
-  try { sources.push(sessionStorage.getItem(KEY_STORAGE)); } catch { /* ignore */ }
-  sources.push(readCookie(KEY_COOKIE));
-  return sources.find((value) => typeof value === 'string' && KEY_RE.test(value)) || '';
+  try { sources.push(localStorage.getItem(CRED_STORAGE)); } catch { /* ignore */ }
+  try { sources.push(sessionStorage.getItem(CRED_STORAGE)); } catch { /* ignore */ }
+  sources.push(readCookie(CRED_COOKIE));
+  for (const raw of sources) {
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (validCredentials(parsed)) return parsed;
+    } catch { /* ignore */ }
+  }
+  return null;
 }
 
-export function saveKey(key) {
-  if (!KEY_RE.test(String(key || ''))) return;
-  try { localStorage.setItem(KEY_STORAGE, key); } catch { /* ignore */ }
-  try { sessionStorage.setItem(KEY_STORAGE, key); } catch { /* ignore */ }
-  if (readCookie(KEY_COOKIE) !== key) writeCookie(KEY_COOKIE, key, 60 * 60 * 24 * 90);
+export function saveCredentials(credentials) {
+  if (!validCredentials(credentials)) return;
+  const raw = JSON.stringify({ nickname: credentials.nickname, password: credentials.password });
+  try { localStorage.setItem(CRED_STORAGE, raw); } catch { /* ignore */ }
+  try { sessionStorage.setItem(CRED_STORAGE, raw); } catch { /* ignore */ }
+  if (readCookie(CRED_COOKIE) !== raw) writeCookie(CRED_COOKIE, raw, 60 * 60 * 24 * 90);
 }
 
-export function clearSavedKey() {
-  try { localStorage.removeItem(KEY_STORAGE); } catch { /* ignore */ }
-  try { sessionStorage.removeItem(KEY_STORAGE); } catch { /* ignore */ }
-  try { document.cookie = `${KEY_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`; } catch { /* ignore */ }
+export function clearSavedCredentials() {
+  try { localStorage.removeItem(CRED_STORAGE); } catch { /* ignore */ }
+  try { sessionStorage.removeItem(CRED_STORAGE); } catch { /* ignore */ }
+  try { document.cookie = `${CRED_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`; } catch { /* ignore */ }
 }
-
-const KEY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function randomHex(bytes) {
   const values = new Uint8Array(bytes);
   crypto.getRandomValues(values);
   return Array.from(values, (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
-}
-
-function randomChars(count) {
-  const values = new Uint8Array(count);
-  crypto.getRandomValues(values);
-  return Array.from(values, (byte) => KEY_ALPHABET[byte % KEY_ALPHABET.length]).join('');
-}
-
-export function generateKey() {
-  const body = randomChars(8);
-  return `DV-${body.slice(0, 4)}-${body.slice(4)}`;
-}
-
-export function normalizeKey(value) {
-  const text = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const body = text.startsWith('DV') ? text.slice(2) : '';
-  if (!/^[A-HJ-NP-Z2-9]{8}$/.test(body)) throw new Error('Неверный формат ключа. ' + KEY_HINT);
-  return `DV-${body.slice(0, 4)}-${body.slice(4)}`;
 }
 
 export function generateInviteCode() {
@@ -88,9 +78,20 @@ export function normalizeInvite(value) {
   return `DVS-${hex.match(/.{1,4}/g).join('-')}`;
 }
 
-export function maskKey(key) {
-  if (!key) return 'DV-••••-••••';
-  return key.replace(/[A-Z2-9]/g, '•');
+/** Быстрая проверка на клиенте; сервер проверяет те же правила. */
+export function validateNickname(value) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!/^[\p{L}\p{N}_ -]{3,24}$/u.test(text)) {
+    throw new Error('Ник: 3–24 символа, буквы, цифры, пробел, дефис или подчёркивание');
+  }
+  return text;
+}
+
+export function validatePassword(value, confirm) {
+  const text = String(value || '');
+  if (text.length < 6 || text.length > 200) throw new Error('Пароль: от 6 до 200 символов');
+  if (confirm !== undefined && text !== String(confirm || '')) throw new Error('Пароли не совпадают');
+  return text;
 }
 
 export function initials(name = '') {

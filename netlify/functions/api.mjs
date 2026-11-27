@@ -15,9 +15,8 @@ import {
   destroySession,
   deviceHash,
   emptyCookie,
-  findUserByKey,
+  findUserByCredentials,
   generateInviteCode,
-  generateKey,
   callView,
   getCall,
   getChat,
@@ -32,7 +31,6 @@ import {
   makeMessageId,
   newChat,
   normalizeInvite,
-  normalizeKey,
   parseBody,
   publicUser,
   pushMessage,
@@ -99,17 +97,15 @@ export async function handler(event) {
     /* ------------------------------ АККАУНТ ------------------------------- */
     if (action === 'account.create') {
       await checkRateLimit(`create:${ip}:${device}`, 10);
-      const key = generateKey();
-      const user = await createUser(key, device);
+      const user = await createUser({ nickname: body.nickname, password: body.password, device });
       const token = await createSession(user.id);
-      return json({ user: publicUser(user), key }, 201, { 'Set-Cookie': sessionCookie(token) });
+      return json({ user: publicUser(user) }, 201, { 'Set-Cookie': sessionCookie(token) });
     }
 
     if (action === 'account.login') {
       await checkRateLimit(`login:${ip}:${device}`, 12);
-      const key = normalizeKey(body.key);
-      const user = await findUserByKey(key, device);
-      if (!user) throw new HttpError(401, 'Ключ не найден. Проверьте формат DV-XXXX-XXXX');
+      const user = await findUserByCredentials(body.nickname, body.password, device);
+      if (!user) throw new HttpError(401, 'Неверный ник или пароль');
       await clearRateLimit(`login:${ip}:${device}`);
       const token = await createSession(user.id);
       return json({ user: publicUser(user) }, 200, { 'Set-Cookie': sessionCookie(token) });

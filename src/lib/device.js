@@ -42,8 +42,8 @@ function writeCookie(name, value) {
 
 /**
  * Один ID устройства живёт сразу в localStorage, sessionStorage и cookie.
- * Если браузер почистил часть хранилища, ключ не «вылетает»: сервер видит
- * тот же deviceHash и тихо обновляет сессию.
+ * Если браузер почистил часть хранилища, вход не «вылетает»: сервер видит
+ * тот же ID и не придирается к устройству.
  */
 export function deviceId() {
   if (memoryId && valid(memoryId)) return memoryId;

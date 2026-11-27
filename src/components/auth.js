@@ -1,14 +1,14 @@
 import { api } from '../lib/api.js';
-import { KEY_HINT, getSavedKey, normalizeKey, saveKey } from '../lib/dvis.js';
+import { getSavedCredentials, saveCredentials, validateNickname, validatePassword } from '../lib/dvis.js';
 import { deviceLabel, interfaceLabel } from '../lib/device.js';
-import { copyText, toast } from '../lib/ui.js';
+import { toast } from '../lib/ui.js';
 import { escapeHtml, icon } from '../lib/utils.js';
 
 export function renderAuth(root, onSuccess) {
   let step = 'welcome';
-  let issuedKey = '';
   let currentUser = null;
   let busy = false;
+  const saved = getSavedCredentials() || { nickname: '', password: '' };
 
   function render() {
     root.innerHTML = `
@@ -31,33 +31,36 @@ export function renderAuth(root, onSuccess) {
   }
 
   function stepHtml() {
-    if (step === 'reveal') {
-      return `
-        <div class="auth-step">
-          <div class="step-badge">${icon('key', 18)} Ключ выдан</div>
-          <h2>Сохраните ключ</h2>
-          <p class="auth-sub">Короткий ключ — это ваш аккаунт. Он появится только сейчас и будет работать только на этом устройстве.</p>
-          <div class="key-box"><span>${escapeHtml(issuedKey)}</span></div>
-          <button class="btn btn--block" data-copy-key>${icon('copy', 17)} Скопировать ключ</button>
-          <div class="warn-box">${icon('info', 16)} Запишите ключ. Потеряете устройство или ключ — восстановить аккаунт нельзя.</div>
-          <button class="btn btn--primary btn--block" data-continue>Я сохранил — продолжить ${icon('arrow', 17)}</button>
-        </div>
-      `;
-    }
-    if (step === 'login') {
+    if (step === 'register' || step === 'login') {
+      const register = step === 'register';
       return `
         <div class="auth-step">
           <button class="link-back" data-back>${icon('back', 15)} Назад</button>
-          <div class="step-badge">${icon('key', 18)} Вход по ключу</div>
-          <h2>Введите ключ</h2>
-          <p class="auth-sub">Ключ действует только на этом устройстве — так даже короткий код нельзя подобрать со стороны.</p>
-          <form id="login-form" class="auth-form">
+          <div class="step-badge">${icon(register ? 'plus' : 'lock', 18)} ${register ? 'Новый аккаунт' : 'Вход в аккаунт'}</div>
+          <h2>${register ? 'Придумайте ник и пароль' : 'Введите ник и пароль'}</h2>
+          <p class="auth-sub">${register
+            ? 'Ник нужен только для входа и виден собеседникам как подпись. Ключей и кодов восстановления больше нет.'
+            : 'Данные сохранены в этом браузере, поэтому обычно вход происходит сам. Здесь можно войти вручную.'}</p>
+          <form id="auth-form" class="auth-form">
             <label class="field">
-              <span>Ключ Dvis</span>
-              <input id="key-input" autocomplete="off" spellcheck="false" value="${escapeHtml(getSavedKey())}" placeholder="${KEY_HINT}" required />
+              <span>Ник</span>
+              <input id="nick-input" autocomplete="username" spellcheck="false"
+                value="${escapeHtml(saved.nickname)}"
+                placeholder="Например, Тихый" maxlength="24" required />
             </label>
+            <label class="field">
+              <span>Пароль</span>
+              <input id="pass-input" type="password" autocomplete="${register ? 'new-password' : 'current-password'}"
+                value="${escapeHtml(register ? '' : saved.password)}" placeholder="Не короче 6 символов" required />
+            </label>
+            ${register ? `
+              <label class="field">
+                <span>Повторите пароль</span>
+                <input id="confirm-input" type="password" autocomplete="new-password" placeholder="Ещё раз" required />
+              </label>
+            ` : ''}
             <p class="field-error" id="auth-error"></p>
-            <button class="btn btn--primary btn--block" type="submit">${icon('arrow', 17)} Войти</button>
+            <button class="btn btn--primary btn--block" type="submit">${icon('arrow', 17)} ${register ? 'Создать аккаунт' : 'Войти'}</button>
           </form>
         </div>
       `;
@@ -66,40 +69,31 @@ export function renderAuth(root, onSuccess) {
       <div class="auth-step">
         <div class="step-badge">${icon('shield', 17)} Приватно по умолчанию</div>
         <h2>Общайтесь без личности</h2>
-        <p class="auth-sub">Dvis не просит телефон и почту. Ключ выдаётся один раз и привязывается к устройству. Люди находятся только по вашему приглашению.</p>
-        <button class="btn btn--primary btn--block" data-create>${icon('plus', 18)} Создать аккаунт</button>
-        <button class="btn btn--soft btn--block" data-login>${icon('key', 18)} У меня уже есть ключ</button>
+        <p class="auth-sub">Dvis не просит телефон, почту и ключи. Вход по нику и паролю, люди находятся только по вашему приглашению.</p>
+        ${saved.nickname ? `
+          <button class="btn btn--primary btn--block" data-quick-login>${icon('arrow', 18)} Войти как ${escapeHtml(saved.nickname)}</button>
+          <p class="hint">Пароль сохранён в этом браузере — нажатие одной кнопки восстановит сессию.</p>
+        ` : ''}
+        <button class="btn ${saved.nickname ? 'btn--soft' : 'btn--primary'} btn--block" data-create>${icon('plus', 18)} Создать аккаунт</button>
+        <button class="btn btn--soft btn--block" data-login>${icon('lock', 18)} У меня уже есть аккаунт</button>
         <div class="auth-note">${icon('info', 15)} При запуске без Netlify данные остаются только в этом браузере.</div>
       </div>
     `;
   }
 
   function bind() {
-    root.querySelector('[data-create]')?.addEventListener('click', async () => {
-      if (busy) return;
-      busy = true;
-      const btn = root.querySelector('[data-create]');
-      btn.disabled = true;
-      btn.textContent = 'Создаём ключ...';
-      try {
-        const result = await api.accountCreate();
-        issuedKey = result.key;
-        currentUser = result.user;
-        saveKey(issuedKey);
-        api.noteAuthenticated();
-        step = 'reveal';
-        render();
-      } catch (error) {
-        toast(error.message || 'Не удалось создать аккаунт', 'error');
-        busy = false;
-        render();
-      }
+    const errorBox = () => root.querySelector('#auth-error');
+
+    root.querySelector('[data-create]')?.addEventListener('click', () => {
+      step = 'register';
+      render();
+      root.querySelector('#nick-input')?.focus();
     });
 
     root.querySelector('[data-login]')?.addEventListener('click', () => {
       step = 'login';
       render();
-      root.querySelector('#key-input')?.focus();
+      root.querySelector('#pass-input')?.focus();
     });
 
     root.querySelector('[data-back]')?.addEventListener('click', () => {
@@ -107,29 +101,47 @@ export function renderAuth(root, onSuccess) {
       render();
     });
 
-    root.querySelector('#login-form')?.addEventListener('submit', async (event) => {
-      event.preventDefault();
+    root.querySelector('[data-quick-login]')?.addEventListener('click', async () => {
       if (busy) return;
-      const errorBox = root.querySelector('#auth-error');
+      busy = true;
+      const btn = root.querySelector('[data-quick-login]');
+      btn.disabled = true;
+      btn.textContent = 'Входим...';
       try {
-        const key = normalizeKey(root.querySelector('#key-input').value);
-        busy = true;
-        const result = await api.accountLogin({ key });
+        const result = await api.accountLogin({ nickname: saved.nickname, password: saved.password });
         currentUser = result.user;
-        saveKey(key);
         api.noteAuthenticated();
         onSuccess(currentUser);
       } catch (error) {
         busy = false;
-        errorBox.textContent = error.message || 'Не удалось войти';
+        toast(error.message || 'Не удалось войти', 'error');
+        render();
       }
     });
 
-    root.querySelector('[data-copy-key]')?.addEventListener('click', () => copyText(issuedKey, 'Ключ скопирован'));
-
-    root.querySelector('[data-continue]')?.addEventListener('click', () => {
-      issuedKey = '';
-      onSuccess(currentUser);
+    root.querySelector('#auth-form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      const box = errorBox();
+      try {
+        const nickname = validateNickname(root.querySelector('#nick-input').value);
+        const password = validatePassword(
+          root.querySelector('#pass-input').value,
+          step === 'register' ? root.querySelector('#confirm-input').value : undefined,
+        );
+        busy = true;
+        const result = step === 'register'
+          ? await api.accountCreate({ nickname, password })
+          : await api.accountLogin({ nickname, password });
+        currentUser = result.user;
+        saveCredentials({ nickname, password });
+        api.noteAuthenticated();
+        onSuccess(currentUser);
+      } catch (error) {
+        busy = false;
+        if (box) box.textContent = error.message || 'Не удалось войти';
+        else toast(error.message || 'Не удалось войти', 'error');
+      }
     });
   }
 

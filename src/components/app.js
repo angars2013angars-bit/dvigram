@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { CallSession } from '../lib/calls.js';
 import { deviceLabel, interfaceLabel, isDesktopLayout } from '../lib/device.js';
-import { REACTIONS, formatDate, formatDuration, formatTime, getSavedKey, maskKey } from '../lib/dvis.js';
+import { REACTIONS, formatDate, formatDuration, formatTime } from '../lib/dvis.js';
 import { closeModal, confirmDialog, copyText, openModal, toast } from '../lib/ui.js';
 import { escapeHtml, icon } from '../lib/utils.js';
 
@@ -15,7 +15,6 @@ export function renderApp(root, user, onLogout) {
     activeChatId: null,
     view: 'chats',
     settingsTab: 'account',
-    keyRevealed: false,
     inviteTab: 'create',
     search: '',
     replyTo: null,
@@ -225,17 +224,12 @@ export function renderApp(root, user, onLogout) {
   }
 
   function settingsBodyHtml() {
-    const storedKey = getSavedKey();
     if (state.settingsTab === 'account') {
       return `
         <div class="card">
-          <div class="card__title">${icon('key', 17)} Ключ аккаунта</div>
-          <div class="masked-key ${state.keyRevealed ? 'is-revealed' : ''}">${escapeHtml(state.keyRevealed && storedKey ? storedKey : maskKey(storedKey))}</div>
-          <div class="key-actions">
-            <button class="btn btn--soft" data-copy-key>${icon('copy', 16)} Копировать</button>
-            <button class="btn btn--soft" data-toggle-key>${icon(state.keyRevealed ? 'eyeOff' : 'eye', 16)} ${state.keyRevealed ? 'Скрыть' : 'Показать'}</button>
-          </div>
-          <p class="hint">Ключ привязан к этому устройству и хранится только в браузере. Показать его можно сразу, без перезагрузки.</p>
+          <div class="card__title">${icon('users', 17)} Вход в аккаунт</div>
+          <div class="login-nick">${escapeHtml(state.user.nickname || state.user.name)}</div>
+          <p class="hint">Ваш ник. Пароль сохранён в этом браузере: если сессия истечёт, приложение войдёт снова само — ключ больше не нужен.</p>
         </div>
         <div class="card">
           <div class="card__title">${icon('shield', 17)} Устройство и версия</div>
@@ -858,12 +852,6 @@ export function renderApp(root, user, onLogout) {
     if (reactButton) return react(reactButton.dataset.messageId, reactButton.dataset.react);
     const actionTarget = target.closest('[data-open-actions]');
     if (actionTarget) return openMessageActions(actionTarget.dataset.openActions);
-    if (target.closest('[data-copy-key]')) return copyText(getSavedKey(), 'Ключ скопирован');
-    if (target.closest('[data-toggle-key]')) {
-      state.keyRevealed = !state.keyRevealed;
-      renderContent();
-      return;
-    }
     const copyInvite = target.closest('[data-copy-invite]');
     if (copyInvite) return copyText(copyInvite.dataset.copyInvite, 'Код скопирован');
     const shareInvite = target.closest('[data-share-invite]');

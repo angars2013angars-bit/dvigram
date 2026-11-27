@@ -2,7 +2,7 @@
  * Локальный адаптер Dvis для разработки без Netlify Functions.
  * Данные хранятся в localStorage под префиксом dvis:local:*.
  */
-import { generateInviteCode, generateKey, normalizeInvite, normalizeKey } from './dvis.js';
+import { generateInviteCode, normalizeInvite, validateNickname, validatePassword } from './dvis.js';
 
 const K = {
   schema: 'dvis:schema',
@@ -57,6 +57,7 @@ function publicUser(user) {
   return {
     id: user.id,
     name: user.name,
+    nickname: user.nickname || user.name,
     color: user.color,
     createdAt: user.createdAt,
     lastSeen: user.lastActive || user.createdAt,
@@ -67,7 +68,7 @@ function publicUser(user) {
 function requireUser() {
   const users = read(K.users, []);
   const user = users.find((item) => item.id === localStorage.getItem(K.current));
-  if (!user) fail('Нужен ключ аккаунта', 401);
+  if (!user) fail('Нужно войти в аккаунт', 401);
   user.lastActive = Date.now();
   write(K.users, users);
   return user;
@@ -215,33 +216,41 @@ function saveCall(call) {
 }
 
 export const localApi = {
-  async accountCreate({ deviceId }) {
+  async accountCreate({ nickname, password, deviceId }) {
     ensure();
-    const key = generateKey();
+    const name = validateNickname(nickname);
+    const secret = validatePassword(password);
+    const users = read(K.users, []);
+    if (users.some((item) => String(item.nickname || item.name).toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      fail('Этот ник уже занят. Выберите другой', 409);
+    }
     const user = {
       id: `u_${crypto.randomUUID()}`,
-      name: `Аноним ${key.slice(-4)}`,
+      nickname: name,
+      name,
       color: '#c8c8c8',
-      key,
+      // Демо-режим без Functions: данные уже лежат в localStorage,
+      // поэтому пароль здесь хранится открыто. На сервере — только scrypt-хэш.
+      password: secret,
       device: deviceId,
       createdAt: Date.now(),
       lastActive: Date.now(),
     };
-    const users = read(K.users, []);
     users.push(user);
     write(K.users, users);
     localStorage.setItem(K.current, user.id);
     localStorage.setItem(K.device, deviceId);
-    return { user: publicUser(user), key };
+    return { user: publicUser(user) };
   },
 
-  async accountLogin({ key, deviceId }) {
+  async accountLogin({ nickname, password, deviceId }) {
     ensure();
-    const normalized = normalizeKey(key);
+    const name = validateNickname(nickname);
     const users = read(K.users, []);
-    const user = users.find((item) => item.key === normalized);
-    if (!user) fail('Ключ не найден. Проверьте, что скопировали его целиком', 401);
-    // Ключ — единственный вход; устройство запоминается, но не блокирует вход.
+    const user = users.find((item) => String(item.nickname || item.name).toLocaleLowerCase() === name.toLocaleLowerCase()
+      && item.password === String(password || ''));
+    if (!user) fail('Неверный ник или пароль', 401);
+    // Устройство запоминается для статистики, но никогда не блокирует вход.
     const devices = Array.isArray(user.devices) ? user.devices : [user.device].filter(Boolean);
     user.devices = Array.from(new Set([...devices, deviceId])).slice(-5);
     user.lastActive = Date.now();
@@ -251,7 +260,7 @@ export const localApi = {
     return { user: publicUser(user) };
   },
 
-  async logout() {
+  async accountLogout() {
     localStorage.removeItem(K.current);
     return { ok: true };
   },

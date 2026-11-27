@@ -1,5 +1,5 @@
 import { deviceId } from './device.js';
-import { clearSavedKey, getSavedKey } from './dvis.js';
+import { clearSavedCredentials, getSavedCredentials } from './dvis.js';
 import { localApi } from './localApi.js';
 
 const API_URL = '/.netlify/functions/api';
@@ -112,7 +112,7 @@ async function serverCall(action, body) {
 /**
  * Проверяем бэкенд один раз. В dev (Vite без Functions) разрешаем демо-режим.
  * В production transient-ошибка НЕ переводит навсегда в localStorage —
- * иначе аккаунт «вылетал» после любого сбоя сети и просил ключ.
+ * иначе аккаунт «вылетал» после любого сбоя сети и просил данные входа.
  */
 async function probeBackend(force = false) {
   if (backendChecked && !force) return backendAvailable;
@@ -152,22 +152,22 @@ async function ensureBackend() {
   return backendAvailable;
 }
 
-/** Тихий релогин по сохранённому ключу — пользователь не видит экран ввода. */
+/** Тихий релогин по сохранённому нику и паролю — экран ввода не показываем. */
 async function relogin() {
   if (reloginPromise) return reloginPromise;
-  const key = getSavedKey();
-  if (!key) return false;
+  const credentials = getSavedCredentials();
+  if (!credentials) return false;
 
   reloginPromise = (async () => {
     try {
-      await serverCall('account.login', { key });
+      await serverCall('account.login', credentials);
       markAuthenticated();
       return true;
     } catch (error) {
-      // Сеть пропала — это не «вылет ключа», а временная ошибка. Повтор сам
-      // пользователь или следующий запрос; экран ввода ключа не показываем.
+      // Сеть пропала — это не «вылет из аккаунта», а временная ошибка.
+      // Сохранённые данные НЕ удаляем: следующий запрос повторит вход сам.
       if (isTransport(error)) throw new ApiError('Сервер временно недоступен. Попробуйте ещё раз', 503);
-      if ([400, 401, 403].includes(error.status)) clearSavedKey();
+      if ([400, 401, 403].includes(error.status)) clearSavedCredentials();
       return false;
     }
   })();
@@ -212,7 +212,7 @@ async function call(action, body = {}) {
   throw new ApiError('Не удалось выполнить запрос');
 }
 
-/** Восстановление сессии при запуске: cookie → сохранённый ключ → ввод ключа. */
+/** Восстановление сессии при запуске: cookie → сохранённые ник/пароль → форма входа. */
 async function restore() {
   await ensureBackend();
   if (!backendAvailable) {
@@ -233,7 +233,7 @@ async function restore() {
         markAuthenticated();
         return user;
       }
-      // Сессия истекла, но ключ сохранён — тихо логинимся и пробуем ещё раз.
+      // Сессия истекла, но данные для входа сохранены — логинимся тихо.
       if (!retriedAuth) {
         retriedAuth = true;
         if (await relogin()) continue;

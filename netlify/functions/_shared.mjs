@@ -1,14 +1,16 @@
-import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
 
 /**
  * Серверный слой Dvis.
- * Анонимные аккаунты, ключи, приглашения и сообщения в Netlify Blobs.
+ * Аккаунты по нику и паролю, приглашения и сообщения в Netlify Blobs.
  * Без Blobs (локально) используется память процесса — `netlify dev` работает без привязки сайта.
  */
 
 const STORE_NAME = 'dvis-data';
-const SESSION_MAX_AGE = 60 * 60 * 24 * 90;
+// Долгая сессия + тихий релогин по сохранённым данным: приложение не
+// выбрасывает пользователя в форму входа при каждом истечении cookie.
+const SESSION_MAX_AGE = 60 * 60 * 24 * 365;
 export const INVITE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 let blobsStore = null;
@@ -101,20 +103,24 @@ export function pickColor(seed) {
   return palette[n % palette.length];
 }
 
-const KEY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-export const KEY_HINT = 'Ключ выглядит так: DV-AB3K-9QWE';
+const MIN_PASSWORD = 6;
+const MAX_PASSWORD = 200;
 
-export function normalizeKey(value) {
-  const text = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const body = text.startsWith('DV') ? text.slice(2) : '';
-  if (!/^[A-HJ-NP-Z2-9]{8}$/.test(body)) throw new HttpError(400, 'Неверный формат ключа. ' + KEY_HINT);
-  return `DV-${body.slice(0, 4)}-${body.slice(4)}`;
+/** Ник используется только для входа и как подпись в чате — каталога нет. */
+export function normalizeNickname(value) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!/^[\p{L}\p{N}_ -]{3,24}$/u.test(text)) {
+    throw new HttpError(400, 'Ник: 3–24 символа, буквы, цифры, пробел, дефис или подчёркивание');
+  }
+  return text;
 }
 
-export function generateKey() {
-  let body = '';
-  for (let i = 0; i < 8; i += 1) body += KEY_ALPHABET[randomInt(KEY_ALPHABET.length)];
-  return normalizeKey(`DV${body}`);
+export function validatePassword(value) {
+  const text = String(value || '');
+  if (text.length < MIN_PASSWORD || text.length > MAX_PASSWORD) {
+    throw new HttpError(400, `Пароль: от ${MIN_PASSWORD} до ${MAX_PASSWORD} символов`);
+  }
+  return text;
 }
 
 export function normalizeInvite(value) {
@@ -143,7 +149,7 @@ export function verifySecret(secret, salt, expectedHash) {
 /* ----------------------------- Пользователи ------------------------------ */
 
 const userKey = (id) => `users/${id}`;
-const keyLookup = (key) => `keys/${createHash('sha256').update(key).digest('hex')}`;
+const nickLookup = (nick) => `nicks/${createHash('sha256').update(nick.toLocaleLowerCase()).digest('hex')}`;
 const sessionKey = (token) => `sessions/${createHash('sha256').update(token).digest('hex')}`;
 const chatKey = (id) => `chats/${id}`;
 const messagesKey = (id) => `messages/${id}`;
@@ -168,6 +174,7 @@ export function publicUser(user) {
   return {
     id: user.id,
     name: user.name,
+    nickname: user.nickname || user.name,
     color: user.color || '#c8c8c8',
     createdAt: user.createdAt,
     lastSeen: user.lastActive || user.createdAt,
@@ -183,47 +190,14 @@ export async function saveUser(user) {
   await write(userKey(user.id), user);
 }
 
-export async function createUser(key, device) {
-  const lookup = await read(keyLookup(key));
-  if (lookup) throw new HttpError(409, 'Этот ключ уже используется');
-
-  const { salt, hash } = hashSecret(key);
-  const user = {
-    id: `u_${randomUUID()}`,
-    name: `Аноним ${key.slice(-4)}`,
-    color: pickColor(key),
-    keySalt: salt,
-    keyHash: hash,
-    // Ключ — единственный вход. Устройства запоминаются, но не блокируют
-    // вход: один и тот же ключ работает на телефоне, ПК и в другом браузере.
-    deviceHashes: [device],
-    createdAt: Date.now(),
-    lastActive: Date.now(),
-  };
-  await saveUser(user);
-  await write(keyLookup(key), user.id);
-  const ids = (await getIndex('users')) || [];
-  ids.push(user.id);
-  await setIndex('users', ids);
-  return user;
-}
-
 const MAX_DEVICES = 5;
 
 function allowedDevices(user) {
   if (Array.isArray(user?.deviceHashes)) return user.deviceHashes;
-  // Совместимость со старыми аккаунтами с одним deviceHash.
   return user?.deviceHash ? [user.deviceHash] : [];
 }
 
-export async function findUserByKey(key, device) {
-  const id = await read(keyLookup(key));
-  if (!id) return null;
-  const user = await getUser(id);
-  if (!user || !verifySecret(key, user.keySalt, user.keyHash)) return null;
-
-  // Ключ прошёл проверку — устройство разрешаем, даже если это новый телефон.
-  // Храним не больше 5 устройств, самый старый вытесняется.
+async function rememberDevice(user, device) {
   const devices = allowedDevices(user);
   if (!devices.includes(device)) {
     user.deviceHashes = [...devices, device].slice(-MAX_DEVICES);
@@ -231,6 +205,41 @@ export async function findUserByKey(key, device) {
     await saveUser(user);
   }
   return user;
+}
+
+export async function createUser({ nickname, password, device }) {
+  const name = normalizeNickname(nickname);
+  const secret = validatePassword(password);
+  const lookupKey = nickLookup(name);
+  if (await read(lookupKey)) throw new HttpError(409, 'Этот ник уже занят. Выберите другой');
+
+  const { salt, hash } = hashSecret(secret);
+  const user = {
+    id: `u_${randomUUID()}`,
+    nickname: name,
+    name,
+    color: pickColor(name),
+    passSalt: salt,
+    passHash: hash,
+    deviceHashes: [device],
+    createdAt: Date.now(),
+    lastActive: Date.now(),
+  };
+  await saveUser(user);
+  await write(lookupKey, user.id);
+  const ids = (await getIndex('users')) || [];
+  ids.push(user.id);
+  await setIndex('users', ids);
+  return user;
+}
+
+export async function findUserByCredentials(nickname, password, device) {
+  const name = normalizeNickname(nickname);
+  const id = await read(nickLookup(name));
+  if (!id) return null;
+  const user = await getUser(id);
+  if (!user || !verifySecret(String(password || ''), user.passSalt, user.passHash)) return null;
+  return rememberDevice(user, device);
 }
 
 export async function touchUser(user) {
@@ -288,7 +297,7 @@ export async function userFromEvent(event) {
 
 export async function requireUser(event) {
   const user = await userFromEvent(event);
-  if (!user) throw new HttpError(401, 'Нужен ключ аккаунта');
+  if (!user) throw new HttpError(401, 'Нужно войти в аккаунт');
   // Сессионная cookie — уже подтверждённый вход. Дополнительная проверка
   // deviceHash здесь выкидывала пользователя при смене ID устройства.
   await touchUser(user);

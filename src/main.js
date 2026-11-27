@@ -114,7 +114,7 @@ let sessionEventsReady = false;
 
 api.onSessionLost((error) => {
   if (!sessionEventsReady) return;
-  toast(error?.message || 'Ключ больше не подходит. Введите его снова', 'error', 5000);
+  toast(error?.message || 'Сессия завершена. Войдите по нику и паролю', 'error', 5000);
   showAuth();
 });
 
