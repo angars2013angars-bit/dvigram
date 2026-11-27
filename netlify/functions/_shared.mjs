@@ -194,7 +194,9 @@ export async function createUser(key, device) {
     color: pickColor(key),
     keySalt: salt,
     keyHash: hash,
-    deviceHash: device,
+    // Ключ — единственный вход. Устройства запоминаются, но не блокируют
+    // вход: один и тот же ключ работает на телефоне, ПК и в другом браузере.
+    deviceHashes: [device],
     createdAt: Date.now(),
     lastActive: Date.now(),
   };
@@ -206,12 +208,28 @@ export async function createUser(key, device) {
   return user;
 }
 
+const MAX_DEVICES = 5;
+
+function allowedDevices(user) {
+  if (Array.isArray(user?.deviceHashes)) return user.deviceHashes;
+  // Совместимость со старыми аккаунтами с одним deviceHash.
+  return user?.deviceHash ? [user.deviceHash] : [];
+}
+
 export async function findUserByKey(key, device) {
   const id = await read(keyLookup(key));
   if (!id) return null;
   const user = await getUser(id);
-  if (!user || user.deviceHash !== device) return null;
-  if (!verifySecret(key, user.keySalt, user.keyHash)) return null;
+  if (!user || !verifySecret(key, user.keySalt, user.keyHash)) return null;
+
+  // Ключ прошёл проверку — устройство разрешаем, даже если это новый телефон.
+  // Храним не больше 5 устройств, самый старый вытесняется.
+  const devices = allowedDevices(user);
+  if (!devices.includes(device)) {
+    user.deviceHashes = [...devices, device].slice(-MAX_DEVICES);
+    delete user.deviceHash;
+    await saveUser(user);
+  }
   return user;
 }
 
@@ -271,9 +289,8 @@ export async function userFromEvent(event) {
 export async function requireUser(event) {
   const user = await userFromEvent(event);
   if (!user) throw new HttpError(401, 'Нужен ключ аккаунта');
-  if (user.deviceHash && user.deviceHash !== deviceHash(event)) {
-    throw new HttpError(403, 'Аккаунт привязан к другому устройству');
-  }
+  // Сессионная cookie — уже подтверждённый вход. Дополнительная проверка
+  // deviceHash здесь выкидывала пользователя при смене ID устройства.
   await touchUser(user);
   return user;
 }

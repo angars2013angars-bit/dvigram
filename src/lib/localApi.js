@@ -241,7 +241,9 @@ export const localApi = {
     const users = read(K.users, []);
     const user = users.find((item) => item.key === normalized);
     if (!user) fail('Ключ не найден. Проверьте, что скопировали его целиком', 401);
-    if (user.device !== deviceId) fail('Ключ привязан к другому устройству', 403);
+    // Ключ — единственный вход; устройство запоминается, но не блокирует вход.
+    const devices = Array.isArray(user.devices) ? user.devices : [user.device].filter(Boolean);
+    user.devices = Array.from(new Set([...devices, deviceId])).slice(-5);
     user.lastActive = Date.now();
     write(K.users, users);
     localStorage.setItem(K.current, user.id);

@@ -109,7 +109,7 @@ export async function handler(event) {
       await checkRateLimit(`login:${ip}:${device}`, 12);
       const key = normalizeKey(body.key);
       const user = await findUserByKey(key, device);
-      if (!user) throw new HttpError(401, 'Ключ не найден или привязан к другому устройству');
+      if (!user) throw new HttpError(401, 'Ключ не найден. Проверьте формат DV-XXXX-XXXX');
       await clearRateLimit(`login:${ip}:${device}`);
       const token = await createSession(user.id);
       return json({ user: publicUser(user) }, 200, { 'Set-Cookie': sessionCookie(token) });
@@ -122,8 +122,7 @@ export async function handler(event) {
 
     if (action === 'me') {
       const user = await userFromEvent(event);
-      const valid = user && (!user.deviceHash || user.deviceHash === device);
-      return json({ user: valid ? publicUser(user) : null });
+      return json({ user: user ? publicUser(user) : null });
     }
 
     if (action === 'profile.update') {
