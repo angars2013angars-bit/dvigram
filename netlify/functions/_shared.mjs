@@ -242,6 +242,28 @@ export async function findUserByCredentials(nickname, password, device) {
   return rememberDevice(user, device);
 }
 
+/**
+ * Смена пароля без старого — только на устройстве, где уже был успешный вход.
+ * Это спасает, когда пользователь забыл пароль или данные сессии сломались,
+ * но не даёт злоумышленнику забрать аккаунт, зная только ник.
+ */
+export async function recoverPassword(nickname, password, device) {
+  const name = normalizeNickname(nickname);
+  const id = await read(nickLookup(name));
+  if (!id) throw new HttpError(404, 'Ник не найден. Проверьте написание');
+  const user = await getUser(id);
+  if (!user) throw new HttpError(404, 'Ник не найден');
+  if (!allowedDevices(user).includes(device)) {
+    throw new HttpError(403, 'Пароль можно сменить только на устройстве, где уже был вход');
+  }
+  const secret = validatePassword(password);
+  const { salt, hash } = hashSecret(secret);
+  user.passSalt = salt;
+  user.passHash = hash;
+  await saveUser(user);
+  return user;
+}
+
 export async function touchUser(user) {
   if (!user) return user;
   if (Date.now() - (user.lastActive || 0) >= 30_000) {

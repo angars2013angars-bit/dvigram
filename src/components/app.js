@@ -285,7 +285,7 @@ export function renderApp(root, user, onLogout) {
         <div class="card__title">${icon('shield', 17)} О приватности</div>
         <p class="hint">Аккаунт — только ключ. Профили не ищутся, переписка доступна лишь участникам чата, созданного по приглашению.</p>
       </div>
-      <p class="version">Dvis · версия 1.0 · ${api.isDemo() ? 'демо-режим' : 'сервер подключён'}</p>
+      <p class="version">Dvis · v2 «ник + пароль» · ${api.isDemo() ? 'демо-режим' : 'сервер подключён'}</p>
     `;
   }
 

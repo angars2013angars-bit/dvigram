@@ -260,6 +260,22 @@ export const localApi = {
     return { user: publicUser(user) };
   },
 
+  async accountRecover({ nickname, password, deviceId }) {
+    ensure();
+    const name = validateNickname(nickname);
+    const secret = validatePassword(password);
+    const users = read(K.users, []);
+    const user = users.find((item) => String(item.nickname || item.name).toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (!user) fail('Ник не найден. Проверьте написание', 404);
+    const devices = Array.isArray(user.devices) ? user.devices : [user.device].filter(Boolean);
+    if (!devices.includes(deviceId)) fail('Пароль можно сменить только на устройстве, где уже был вход', 403);
+    user.password = secret;
+    user.lastActive = Date.now();
+    write(K.users, users);
+    localStorage.setItem(K.current, user.id);
+    return { user: publicUser(user) };
+  },
+
   async accountLogout() {
     localStorage.removeItem(K.current);
     return { ok: true };

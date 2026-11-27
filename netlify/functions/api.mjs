@@ -34,6 +34,7 @@ import {
   parseBody,
   publicUser,
   pushMessage,
+  recoverPassword,
   requireUser,
   saveCall,
   saveChat,
@@ -100,6 +101,14 @@ export async function handler(event) {
       const user = await createUser({ nickname: body.nickname, password: body.password, device });
       const token = await createSession(user.id);
       return json({ user: publicUser(user) }, 201, { 'Set-Cookie': sessionCookie(token) });
+    }
+
+    if (action === 'account.recover') {
+      await checkRateLimit(`recover:${ip}:${device}`, 6);
+      const user = await recoverPassword(body.nickname, body.password, device);
+      await clearRateLimit(`recover:${ip}:${device}`);
+      const token = await createSession(user.id);
+      return json({ user: publicUser(user) }, 200, { 'Set-Cookie': sessionCookie(token) });
     }
 
     if (action === 'account.login') {

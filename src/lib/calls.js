@@ -21,6 +21,9 @@ export class CallSession {
     this.answerApplied = false;
     this.seenIce = new Set();
     this.pendingIce = [];
+    // Если Netlify на секунду недоступен, сигнал не теряется: он отправится
+    // повторно на следующем опросе calls.list.
+    this.pendingSignals = [];
     this.startedAt = 0;
     this.muted = false;
     this.closed = true;
@@ -50,7 +53,11 @@ export class CallSession {
     this.seenIce.clear();
     this.pendingIce = [];
     this.answerApplied = false;
-    this.pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    this.pc = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      iceCandidatePoolSize: 2,
+      bundlePolicy: 'max-bundle',
+    });
     this.remoteStream = new MediaStream();
     this.audio = document.createElement('audio');
     this.audio.autoplay = true;
@@ -68,7 +75,14 @@ export class CallSession {
     // проверяем только живой RTCPeerConnection, а не состояние звонка.
     this.pc.onicecandidate = (event) => {
       if (!event.candidate || !this.pc || this.closed) return;
-      this.api.callSignal({ chatId: this.chatId, kind: 'ice', data: event.candidate.toJSON() }).catch(() => {});
+      this.sendSignal('ice', event.candidate.toJSON());
+    };
+
+    // На некоторых браузерах connectionState обновляется с задержкой —
+    // iceConnectionState даёт тот же результат раньше.
+    this.pc.oniceconnectionstatechange = () => {
+      if (!this.pc || this.closed) return;
+      if (['connected', 'completed'].includes(this.pc.iceConnectionState)) this.markActive();
     };
 
     this.pc.onconnectionstatechange = () => {
@@ -93,6 +107,25 @@ export class CallSession {
         if (!this.closed) this.onState('failed', this);
       }
     };
+  }
+
+  async sendSignal(kind, data) {
+    try {
+      await this.api.callSignal({ chatId: this.chatId, kind, data });
+      return true;
+    } catch {
+      // Не дублируем один и тот же сигнал в очереди.
+      if (!this.pendingSignals.some((item) => item.kind === kind && JSON.stringify(item.data) === JSON.stringify(data))) {
+        this.pendingSignals.push({ kind, data });
+      }
+      return false;
+    }
+  }
+
+  async flushSignals() {
+    if (!this.pendingSignals.length || this.closed) return;
+    const pending = this.pendingSignals.splice(0);
+    for (const signal of pending) await this.sendSignal(signal.kind, signal.data);
   }
 
   async getMicrophone() {
@@ -163,7 +196,7 @@ export class CallSession {
     await this.getMicrophone();
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
-    await this.api.callSignal({ chatId: this.chatId, kind: 'offer', data: this.pc.localDescription.toJSON() });
+    await this.sendSignal('offer', this.pc.localDescription.toJSON());
   }
 
   async accept(call) {
@@ -174,12 +207,13 @@ export class CallSession {
     await this.flushIce(call);
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
-    await this.api.callSignal({ chatId: this.chatId, kind: 'answer', data: this.pc.localDescription.toJSON() });
+    await this.sendSignal('answer', this.pc.localDescription.toJSON());
     await this.markActive();
   }
 
   async apply(call) {
     if (!this.pc || this.closed) return;
+    await this.flushSignals();
     if (call.status === 'ended') {
       this.cleanup();
       this.setStatus('ended');
@@ -187,7 +221,12 @@ export class CallSession {
     }
 
     if (this.status === 'outgoing' && !this.answerApplied && call.answer && call.answer.from !== this.meId) {
-      await this.pc.setRemoteDescription(new RTCSessionDescription(call.answer));
+      try {
+        await this.pc.setRemoteDescription(new RTCSessionDescription(call.answer));
+      } catch {
+        this.onState('failed', this);
+        return;
+      }
       this.answerApplied = true;
       await this.flushIce(call);
       await this.markActive();
@@ -228,6 +267,7 @@ export class CallSession {
     this.answerApplied = false;
     this.seenIce.clear();
     this.pendingIce = [];
+    this.pendingSignals = [];
     this.muted = false;
   }
 }

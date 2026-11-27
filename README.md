@@ -157,6 +157,8 @@ ratelimit/<key>         защита от перебора паролей
 
 ## Деплой на Netlify (бесплатно)
 
+Подробная пошаговая инструкция с проверками и решением проблем: **[DEPLOY.md](DEPLOY.md)**.
+
 1. Запушьте код в GitHub.
 2. На <https://app.netlify.com>: **Add new site → Import an existing project**.
 3. Настройки уже в `netlify.toml`: build `npm run build`, publish `dist`, functions `netlify/functions`, Node `22`.

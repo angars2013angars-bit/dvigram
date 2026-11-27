@@ -1,5 +1,5 @@
 import { deviceId } from './device.js';
-import { clearSavedCredentials, getSavedCredentials } from './dvis.js';
+import { getSavedCredentials } from './dvis.js';
 import { localApi } from './localApi.js';
 
 const API_URL = '/.netlify/functions/api';
@@ -167,7 +167,8 @@ async function relogin() {
       // Сеть пропала — это не «вылет из аккаунта», а временная ошибка.
       // Сохранённые данные НЕ удаляем: следующий запрос повторит вход сам.
       if (isTransport(error)) throw new ApiError('Сервер временно недоступен. Попробуйте ещё раз', 503);
-      if ([400, 401, 403].includes(error.status)) clearSavedCredentials();
+      // Данные НЕ удаляем: они нужны, чтобы пользователь мог исправить
+      // пароль в форме входа, не создавая аккаунт заново.
       return false;
     }
   })();
@@ -284,6 +285,7 @@ export const api = {
   clearSessionLost: markAuthenticated,
   accountCreate: method('account.create'),
   accountLogin: method('account.login'),
+  accountRecover: method('account.recover'),
   logout: method('account.logout'),
   me: method('me'),
   profileUpdate: method('profile.update'),

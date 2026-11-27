@@ -62,6 +62,10 @@ export function renderAuth(root, onSuccess) {
             <p class="field-error" id="auth-error"></p>
             <button class="btn btn--primary btn--block" type="submit">${icon('arrow', 17)} ${register ? 'Создать аккаунт' : 'Войти'}</button>
           </form>
+          ${register ? '' : `
+            <button class="btn btn--soft btn--block" data-recover>${icon('shield', 16)} Не помню пароль — сменить на этом устройстве</button>
+            <p class="hint">Новый пароль можно задать только на устройстве, где уже был вход в этот аккаунт.</p>
+          `}
         </div>
       `;
     }
@@ -116,6 +120,23 @@ export function renderAuth(root, onSuccess) {
         busy = false;
         toast(error.message || 'Не удалось войти', 'error');
         render();
+      }
+    });
+
+    root.querySelector('[data-recover]')?.addEventListener('click', async () => {
+      if (busy) return;
+      const box = errorBox();
+      try {
+        const nickname = validateNickname(root.querySelector('#nick-input').value);
+        const password = validatePassword(root.querySelector('#pass-input').value);
+        busy = true;
+        const result = await api.accountRecover({ nickname, password });
+        saveCredentials({ nickname, password });
+        api.noteAuthenticated();
+        onSuccess(result.user);
+      } catch (error) {
+        busy = false;
+        if (box) box.textContent = error.message || 'Не удалось сменить пароль';
       }
     });
 
